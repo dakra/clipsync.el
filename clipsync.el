@@ -29,11 +29,10 @@
 
 ;; `clipsync.el' synchronizes your primary and clipboard selection with
 ;; the Emacs kill ring by waiting for new clipboard events with
-;; clipnotify[0] and then using either xsel[1] or xclip[2]
-;; to put new clipboard content in the kill ring.
-;; It's inspired by the simple solution of clipmenu[3].
+;; clipnotify[0] and then adding new clipboard content in the kill ring.
+;; It's inspired by the simple solution of clipmenu[1].
 ;;
-;; From the autocutsel[4] doc:
+;; Some info what's CLIPBOARD and PRIMARY, see the autocutsel[2] doc:
 ;;
 ;; Recent desktop applications (GNOME, KDE, ...) use two selections:
 ;; the PRIMARY and the CLIPBOARD.  The PRIMARY selection is used when
@@ -43,64 +42,23 @@
 ;; the Edit/Paste menu.
 
 ;; [0] https://github.com/cdown/clipnotify
-;; [1] http://www.kfish.org/software/xsel/
-;; [2] https://github.com/astrand/xclip
-;; [3] https://github.com/cdown/clipmenu
-;; [4] https://github.com/sigmike/autocutsel
+;; [1] https://github.com/cdown/clipmenu
+;; [2] https://github.com/sigmike/autocutsel
 
 
 ;;; Code:
 (require 'async)
+(require 'select)
+
 
 ;; PRIMARY is mouse selection
 ;; CLIPBOARD is copy text by Ctrl-C or Edit/Copy menu etc
 
-(defvar clipsync--last-clipboard nil)
-(defvar clipsync--last-primary nil)
-
-;; (shell-command "xsel -v -o --primary" "outtest" "errtest")
-;; (make-process "xsel-test" "*xsel-test" "xsel -o --primary")
-;; (shell-command-to-string "xsel -o --primary")
-;; FIXME: (shell-command-to-string "xsel -o --primary")
-;;        sometimes just "hangs"?
-(defun clipsync-get-selection (selection)
-  "Get string from SELECTION.
-SELECTION should be 'primary 'clipboard or 'secondary."
-  (with-temp-buffer
-    (make-process
-     :name "xsel-test"
-     :buffer (current-buffer)
-     :command `("xsel" "-o" ,(concat "--" (symbol-name selection)))
-     :noquery t
-     ;;:stderr (get-buffer "*scratch*")
-     :connection-type 'pipe)
-    (sit-for 0.1 t)
-    (goto-char (point-max))
-    (forward-line -1)
-    (unless (eq (point) (point-min))
-      (forward-char -1))
-    (buffer-substring (point-min) (point))))
-
-
-;; FIXME: Strange behavior when using primary AND clipboard
-;; as Emacs fills clipboard itself
-;; FIXME: Only do when left mouse button is not pressed?!
-(defun clipsync-xsel-kill-new ()
-  "Check selections for new strings and put them in the kill ring."
-  (let ((primary (clipsync-get-selection 'primary)))
-    ;; Check if the primary selection was changed
-    (message "--- New selection")
-    (if (not (string-equal primary clipsync--last-primary))
-        (progn
-          (message "primary")
-          (setq clipsync--last-primary primary)
-          (kill-new primary))
-      ;; Check if the clipboard selection was changed
-      (let ((clipboard (clipsync-get-selection 'clipboard)))
-        (unless (string-equal clipboard clipsync--last-clipboard)
-          (message "clipboard")
-          (setq clipsync--last-clipboard clipboard)
-          (kill-new clipboard))))))
+(defun clipsync-get-selection ()
+  "Get string from clipboard or primary selection."
+  (let ((select-enable-primary t)
+        (select-enable-clipboard t))
+    (gui-selection-value)))
 
 
 ;;;###autoload
@@ -109,6 +67,7 @@ SELECTION should be 'primary 'clipboard or 'secondary."
   :lighter" clipsync"
   :global t
   (when clipsync-mode
+    (setq select-active-regions nil)
     (clipsync-start-clipnotify)))
 
 
@@ -116,11 +75,12 @@ SELECTION should be 'primary 'clipboard or 'secondary."
   "This function is called when clipnotify finishes.
 Which means we check for new selections and start again."
   (with-current-buffer (window-buffer (selected-window))
-    (sit-for 1 t)
+    (sit-for 0.5 t)
     ;; We only want to copy stuff when we're in an X11 window
     ;; Emacs can handle the clipboard / kill-ring itself
     (when (eq major-mode 'exwm-mode)
-      (clipsync-xsel-kill-new)))
+      (when-let ((selection (clipsync-get-selection)))
+        (kill-new selection))))
   ;; Start clipnotify again
   (when clipsync-mode
     (clipsync-start-clipnotify)))
